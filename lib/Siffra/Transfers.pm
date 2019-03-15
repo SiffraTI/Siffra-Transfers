@@ -64,6 +64,7 @@ sub new
 
     $log->info( "new", { progname => $0, pid => $$, perl_version => $], package => __PACKAGE__ } );
 
+    $self->_initialize( %parameters );
     return $self;
 } ## end sub new
 
