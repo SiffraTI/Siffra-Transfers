@@ -7,18 +7,19 @@ use utf8;
 use Data::Dumper;
 use Log::Any qw($log);
 use Scalar::Util qw(blessed);
- 
-BEGIN {
+
+BEGIN
+{
     use Exporter ();
     use vars qw($VERSION @ISA @EXPORT @EXPORT_OK %EXPORT_TAGS);
-    $VERSION     = '0.01';
-    @ISA         = qw(Exporter);
+    $VERSION = '0.01';
+    @ISA     = qw(Exporter);
+
     #Give a hoot don't pollute, do not export more than needed by default
     @EXPORT      = qw();
     @EXPORT_OK   = qw();
     %EXPORT_TAGS = ();
-}
- 
+} ## end BEGIN
 
 #################### subroutine header begin ####################
 
@@ -38,7 +39,6 @@ See Also   :
 
 #################### subroutine header end ####################
 
-
 =head2 C<new()>
  
   Usage     : $self->block_new_method() within text_pm_file()
@@ -53,25 +53,25 @@ See Also   :
               parameters.
  
 =cut
- 
+
 sub new
 {
-    my ($class, %parameters) = @_;
+    my ( $class, %parameters ) = @_;
 
     my $self = {};
- 
-    $self = bless ($self, ref ($class) || $class);
+
+    $self = bless( $self, ref( $class ) || $class );
 
     $log->info( "new", { progname => $0, pid => $$, perl_version => $], package => __PACKAGE__ } );
- 
+
     return $self;
-}
- 
+} ## end sub new
+
 sub _initialize()
 {
     my ( $self, %parameters ) = @_;
     $log->info( "_initialize", { package => __PACKAGE__ } );
-} ## end sub _initialize
+}
 
 sub END
 {
@@ -116,11 +116,10 @@ sub DESTROY
         # TODO
     }
 } ## end sub DESTROY
- 
+
 #################### main pod documentation begin ###################
 ## Below is the stub of documentation for your module.
 ## You better edit it!
- 
 
 =encoding UTF-8
 
@@ -178,10 +177,10 @@ LICENSE file included with this module.
 perl(1).
  
 =cut
- 
+
 #################### main pod documentation end ###################
- 
 
 1;
+
 # The preceding line will help the module return a true value
 
