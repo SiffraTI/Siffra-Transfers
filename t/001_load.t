@@ -6,7 +6,5 @@ use Test::More tests => 2;
 
 BEGIN { use_ok( 'Siffra::Transfers' ); }
 
-my $object = Siffra::Transfers->new ();
-isa_ok ($object, 'Siffra::Transfers');
-
-
+my $object = Siffra::Transfers->new();
+isa_ok( $object, 'Siffra::Transfers' );
