@@ -148,6 +148,10 @@ my $setPassive = sub {
     my ( $self, $value ) = @_;
     return $self->{ config }->{ passive } = $value;
 };
+my $setIdentityFile = sub {
+    my ( $self, $value ) = @_;
+    return $self->{ config }->{ identity_file } = $value;
+};
 my $setLocalDirectory = sub {
     my ( $self, $value ) = @_;
     return $self->{ config }->{ localDirectory } = ( $value // './download/' );
@@ -204,6 +208,7 @@ sub setConfig()
     $self->$setPort( $parameters{ port } );
     $self->$setDebug( $parameters{ debug } );
     $self->$setPassive( $parameters{ passive } );
+    $self->$setIdentityFile( $parameters{ identity_file } );
     $self->$setLocalDirectory( $parameters{ localDirectory } );
     $self->$setDirectories( $parameters{ directories } );
 
@@ -241,7 +246,7 @@ sub connect()
     }
     elsif ( uc $self->{ config }->{ protocol } eq 'LOCAL' )
     {
-        $retorno = TRUE;
+        $retorno = $self->connectLocal( %parameters );
     }
 
     return $retorno;
@@ -321,10 +326,13 @@ sub connectSFTP()
         password => $self->{ config }->{ password },
         port     => $self->{ config }->{ port } // 22,
         autodie  => 0,
-        more     => [ -o => 'StrictHostKeyChecking no' ],
+        more     => [
+            -o => 'StrictHostKeyChecking no',
+            -o => 'HostKeyAlgorithms +ssh-dss',
+        ],
     );
 
-    $args{ key_path } = [ $self->{ config }->{ identity_file } ] if $self->{ config }->{ identity_file };
+    push @{ $args{ key_path } }, $self->{ config }->{ identity_file } if $self->{ config }->{ identity_file };
     push @{ $args{ more } }, '-v' if ( $self->{ config }->{ debug } );
 
     $self->{ connection } = eval { Net::SFTP::Foreign->new( %args ); };
@@ -349,6 +357,8 @@ sub connectSFTP()
 sub connectLocal()
 {
     my ( $self, %parameters ) = @_;
+
+    return TRUE;
 }
 
 =head2 C<getActiveDirectory()>

@@ -25,6 +25,7 @@ my %WriteMakefileArgs = (
         'Scalar::Util'       => 0,
         'Data::Dumper'       => 0,
         'Net::SFTP::Foreign' => 0,
+        'Term::ProgressBar'  => 0,
     },
     BUILD_REQUIRES => {
         'Test::More'          => 0,
