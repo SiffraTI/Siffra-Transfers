@@ -14,16 +14,22 @@ my %WriteMakefileArgs = (
     LICENSE          => 'perl',
     INSTALLDIRS      => ( $] < 5.011 ? 'perl' : 'site' ),
     PREREQ_PM        => {
-        'strict'             => 0,
-        'warnings'           => 0,
-        'Test::Simple'       => 0.44,
+
+        # Default req
+        'strict'       => 0,
+        'warnings'     => 0,
+        'Carp'         => 0,
+        'utf8'         => 0,
+        'Data::Dumper' => 0,
+        'DDP'          => 0,
+        'Log::Any'     => 0,
+        'Scalar::Util' => 0,
+        'version'      => 0,
+        # Default req
+
         'Test::More'         => 0,
-        'Test::Perl::Critic' => 0,
-        'version'            => 0,
-        'utf8'               => 0,
-        'Log::Any'           => 0,
-        'Scalar::Util'       => 0,
-        'Data::Dumper'       => 0,
+        'Siffra::Tools'      => 0,
+        'Net::FTP'           => 0,
         'Net::SFTP::Foreign' => 0,
         'Term::ProgressBar'  => 0,
     },
