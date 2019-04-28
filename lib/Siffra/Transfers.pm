@@ -49,11 +49,11 @@ BEGIN
     binmode( STDOUT, ":encoding(UTF-8)" );
     binmode( STDERR, ":encoding(UTF-8)" );
 
-    require Siffra::Base;
+    require Siffra::Tools;
     use Exporter ();
     use vars qw($VERSION @ISA @EXPORT @EXPORT_OK %EXPORT_TAGS);
     $VERSION = '0.03';
-    @ISA     = qw(Siffra::Base Exporter);
+    @ISA     = qw(Siffra::Tools Exporter);
 
     #Give a hoot don't pollute, do not export more than needed by default
     @EXPORT      = qw();
@@ -538,32 +538,6 @@ sub getFilesLOCAL()
     my ( $self, %parameters ) = @_;
     return TRUE;
 }
-
-=head2 C<getFileMD5()>
-=cut
-
-#-------------------------------------------------------------------------------
-# Retorna o MD5 do arquivo
-# Parametro 1 - Caminho e nome do arquivo a ser calculado
-# Retorna o MD5 do arquivo informado
-#-------------------------------------------------------------------------------
-sub getFileMD5()
-{
-    my ( $self, %parameters ) = @_;
-    my $file = $parameters{ file };
-    my $retorno;
-
-    return FALSE unless ( -e $file );
-
-    require Digest::MD5;
-
-    open( my $fh, '<', $file ) or croak( "Can't open '$file': $!" );
-    binmode( $fh );
-    $retorno = Digest::MD5->new->addfile( $fh )->hexdigest;
-    close( $fh );
-
-    return $retorno;
-} ## end sub getFileMD5
 
 #-------------------------------------------------------------------------------
 # Descompacta arquivos
