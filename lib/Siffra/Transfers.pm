@@ -148,6 +148,10 @@ my $setPassive = sub {
     my ( $self, $value ) = @_;
     return $self->{ config }->{ passive } = $value;
 };
+my $setSsl = sub {
+    my ( $self, $value ) = @_;
+    return $self->{ config }->{ ssl } = $value;
+};
 my $setIdentityFile = sub {
     my ( $self, $value ) = @_;
     return $self->{ config }->{ identity_file } = $value;
@@ -159,6 +163,7 @@ my $setLocalDirectory = sub {
 my $setDirectories = sub {
     my ( $self, $value ) = @_;
 
+    $self->{ config }->{ directories } = undef;
     while ( my ( $remoteDirectory, $configuration ) = each( %{ $value } ) )
     {
         $configuration->{ remoteDirectory } = $remoteDirectory;
@@ -178,9 +183,20 @@ my $setDirectories = sub {
 sub addDirectory
 {
     my ( $self, $configuration ) = @_;
+
+    return FALSE unless $configuration->{ fileNameRule };
+    return FALSE unless $configuration->{ remoteDirectory };
+    return FALSE unless ref $configuration->{ downloadedFiles } eq 'HASH';
+
+    #{
+    #    downloadedFiles   {},
+    #    fileNameRule      "VALID_RETORNO_.*",
+    #    remoteDirectory   "/valid/upload/"
+    #}
+
     $self->{ config }->{ directories }->{ $configuration->{ remoteDirectory } } = $configuration;
     return TRUE;
-}
+} ## end sub addDirectory
 
 =head2 C<cleanDirectories()>
 =cut
@@ -208,6 +224,7 @@ sub setConfig()
     $self->$setPort( $parameters{ port } );
     $self->$setDebug( $parameters{ debug } );
     $self->$setPassive( $parameters{ passive } );
+    $self->$setSsl( $parameters{ ssl } );
     $self->$setIdentityFile( $parameters{ identity_file } );
     $self->$setLocalDirectory( $parameters{ localDirectory } );
     $self->$setDirectories( $parameters{ directories } );
@@ -284,6 +301,7 @@ sub connectFTP()
 
     if ( $self->{ connection } )
     {
+        $self->{ connection }->starttls() if $self->{ config }->{ ssl };
         my $user     = $self->{ config }->{ user };
         my $password = $self->{ config }->{ password };
         if ( !$self->{ connection }->login( $user, $password ) )
@@ -448,10 +466,123 @@ sub getFiles
 
 sub getFilesFTP()
 {
+    $log->debug( "getFilesFTP", { package => __PACKAGE__ } );
     my ( $self, %parameters ) = @_;
 
+    my $retorno = {
+        error              => 0,
+        message            => 'ok',
+        downloadedFiles    => [],
+        notDownloadedFiles => []
+    };
+
+    my $remoteDirectory = $self->getActiveDirectory();
+    my $configuration   = $self->{ config }->{ directories }->{ $remoteDirectory };
+    my $localDirectory  = $self->{ config }->{ localDirectory };                      #'./download/';
+
+    $log->info( "Entrando em [ getFilesFTP ] para o diretório [ $remoteDirectory ]..." );
+
+    unless ( $self->{ connection }->cwd( $remoteDirectory ) )
+    {
+        return {
+            error   => 1,
+            message => $self->{ connection }->message()
+        };
+    } ## end unless ( $self->{ connection...})
+
+    unless ( $self->{ connection }->binary() )
+    {
+        return {
+            error   => 1,
+            message => $self->{ connection }->message()
+        };
+    } ## end unless ( $self->{ connection...})
+
+    my $files = $self->{ connection }->ls();
+
+    if ( ( !defined $files ) && ( $self->{ connection }->message() =~ 'No files found' ) )
+    {
+        return {
+            error   => 0,
+            message => $self->{ connection }->message(),
+            files   => []
+        };
+    } ## end if ( ( !defined $files...))
+    elsif ( !defined $files )
+    {
+
+        return {
+            error   => 1,
+            message => ( $self->{ connection }->message() || '' )
+        };
+    } ## end elsif ( !defined $files )
+
+    foreach my $remoteFile ( @{ $files } )
+    {
+        my $status = $self->canDownloadFile( fileName => $remoteFile );
+        if ( $status < 0 )
+        {
+            push( @{ $retorno->{ notDownloadedFiles } }, { name => $remoteFile, status => $status } );
+            next;
+        }
+
+        $log->info( "Baixando $remoteFile..." );
+
+        my $localFile = $localDirectory . '/' . $remoteFile;
+        my $get       = eval { $self->{ connection }->get( $remoteFile, $localFile ); };
+
+        my $file = {
+            error     => 0,
+            message   => '',
+            name      => $remoteFile,
+            file_size => -1,
+            md5sum    => undef,
+            filePath  => $localFile
+        };
+
+        if ( !$get )
+        {
+            $file->{ error }   = 1;
+            $file->{ message } = $self->{ connection }->message();
+        }
+        else
+        {
+            $file->{ file_size } = -s $localFile;
+
+            my $md5 = $self->getFileMD5( file => $localFile );
+            $file->{ md5sum } = $md5;
+
+        } ## end else [ if ( !$get ) ]
+
+        push( @{ $retorno->{ downloadedFiles } }, $file );
+        last() if ( $parameters{ only_one_file } );
+    } ## end foreach my $remoteFile ( @{...})
+    return $retorno;
+} ## end sub getFilesFTP
+
+=head2 C<canDownloadFile()>
+=cut
+
+sub canDownloadFile()
+{
+    $log->debug( "canDownloadFile", { package => __PACKAGE__ } );
+    my ( $self, %parameters ) = @_;
+    my $fileName = $parameters{ fileName };
+
+    my $activeDownload = $self->{ config }->{ directories }->{ $self->getActiveDirectory() };
+
+    # ja foi baixado
+    return -1 if ( $activeDownload->{ downloadedFiles }{ $fileName } );
+
+    # nao bate com a regra de nomes
+    if ( defined $activeDownload->{ fileNameRule } )
+    {
+        $self->{ message } = "Arquivo [ $fileName ] não bate com a regra de filename_pattern.";
+        return -2 if ( $fileName !~ /$activeDownload->{fileNameRule}/ );
+    }
+
     return TRUE;
-}
+} ## end sub canDownloadFile
 
 =head2 C<getFilesSFTP()>
 =cut
@@ -481,51 +612,62 @@ sub getFilesSFTP()
         }
     );
 
-    my $callback = sub {
-        my ( $sftp, $data, $offset, $size, $progress ) = @_;
-        $offset = $size if ( $offset >= $size );
-        $progress->update( $offset );
-    };
-
-    foreach my $remoteFile ( @{ $ls } )
+    if ( $ls )
     {
-        my $progress = Term::ProgressBar->new(
-            {
-                name   => $remoteFile->{ filename } . " ( $remoteFile->{ a }->{ size } ) ",
-                count  => $remoteFile->{ a }->{ size },
-                ETA    => 'linear',
-                remove => 1,
-            }
-        );
-        $progress->minor( 0 );
-
-        my %options = ( callback => sub { &$callback( @_, $progress ); }, mkpath => 1 );
-        $self->{ connection }->get( $remoteDirectory . $remoteFile->{ filename }, $localDirectory . $remoteFile->{ filename }, %options );
-
-        my $downloadedFile = {
-            error    => FALSE,
-            message  => undef,
-            filename => $remoteFile->{ filename },
-            size     => $remoteFile->{ a }->{ size },
-            md5sum   => undef,
-            filePath => $localDirectory . $remoteFile->{ filename },
+        my $callback = sub {
+            my ( $sftp, $data, $offset, $size, $progress ) = @_;
+            $offset = $size if ( $offset >= $size );
+            $progress->update( $offset );
         };
 
-        if ( $self->{ connection }->error )
+        foreach my $remoteFile ( @{ $ls } )
         {
-            $log->error( $self->{ connection }->error );
-            $downloadedFile->{ error }   = TRUE;
-            $downloadedFile->{ message } = $self->{ connection }->error;
-        } ## end if ( $self->{ connection...})
-        else
-        {
-            $downloadedFile->{ md5sum } = $self->getFileMD5( file => $localDirectory . $remoteFile->{ filename } );
-            $downloadedFile->{ message } = 'Ok';
-            $log->info( "Download do arquivo [ $downloadedFile->{ filename } ] feito com sucesso..." );
-        } ## end else [ if ( $self->{ connection...})]
+            my $progress = Term::ProgressBar->new(
+                {
+                    name   => $remoteFile->{ filename } . " ( $remoteFile->{ a }->{ size } ) ",
+                    count  => $remoteFile->{ a }->{ size },
+                    ETA    => 'linear',
+                    remove => 1,
+                }
+            );
+            $progress->minor( 0 );
 
-        push( @{ $retorno->{ downloadedFiles } }, $downloadedFile );
-    } ## end foreach my $remoteFile ( @{...})
+            my %options = ( callback => sub { &$callback( @_, $progress ); }, mkpath => 1 );
+
+            #$log->debug( $remoteDirectory . $remoteFile->{ filename } );
+            $self->{ connection }->get( $remoteDirectory . $remoteFile->{ filename }, $localDirectory . $remoteFile->{ filename }, %options );
+
+            my $downloadedFile = {
+                error    => FALSE,
+                message  => undef,
+                filename => $remoteFile->{ filename },
+                size     => $remoteFile->{ a }->{ size },
+                md5sum   => undef,
+                filePath => $localDirectory . $remoteFile->{ filename },
+            };
+
+            if ( $self->{ connection }->error )
+            {
+                $log->error( $self->{ connection }->error );
+                $log->error( $remoteDirectory . $remoteFile->{ filename } );
+                $downloadedFile->{ error }      = TRUE;
+                $downloadedFile->{ message }    = $self->{ connection }->error;
+                $downloadedFile->{ remoteFile } = $remoteDirectory . $remoteFile->{ filename };
+            } ## end if ( $self->{ connection...})
+            else
+            {
+                $downloadedFile->{ md5sum }  = $self->getFileMD5( file => $localDirectory . $remoteFile->{ filename } );
+                $downloadedFile->{ message } = 'Ok';
+                $log->info( "Download do arquivo [ $downloadedFile->{ filename } ] feito com sucesso..." );
+            } ## end else [ if ( $self->{ connection...})]
+
+            push( @{ $retorno->{ downloadedFiles } }, $downloadedFile );
+        } ## end foreach my $remoteFile ( @{...})
+    } ## end if ( $ls )
+    else
+    {
+        $log->warn( 'Nenhuma arquivo para ser baixado...' );
+    }
 
     return $retorno;
 } ## end sub getFilesSFTP
