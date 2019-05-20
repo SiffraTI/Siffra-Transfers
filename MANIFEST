@@ -1,4 +1,6 @@
 Changes
+dist.sh
+install.sh
 lib/Siffra/Transfers.pm
 LICENSE
 Makefile.PL

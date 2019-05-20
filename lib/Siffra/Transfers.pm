@@ -17,32 +17,11 @@ use constant {
     FALSE => 0,
     TRUE  => 1,
     DEBUG => $ENV{ DEBUG } // 0,
+
+    FILE_ALREADY_DOWNLOADED => -1,
 };
 
 use Term::ProgressBar;
-
-#-------------------------------------------------------------------------------
-# Tipos de protocolos suportados
-#-------------------------------------------------------------------------------
-my $supportedProtocols = {
-    'FTP'   => TRUE,
-    'SFTP'  => TRUE,
-    'LOCAL' => TRUE
-};
-
-#-------------------------------------------------------------------------------
-# Tipos de MIMI-Types suportados
-#-------------------------------------------------------------------------------
-my $supported_mimi_types = {
-    'application/x-tar-gz'         => FALSE,          # .tar.gz
-    'application/x-bzip'           => FALSE,          # .bz2
-    'application/zip'              => 'unZipFile',    # .zip
-    'application/x-rar-compressed' => FALSE,          # .rar
-    'application/x-tar'            => FALSE,          # .tar
-    'application/pdf'              => FALSE,          # .pdf
-                                                      # este não existe MIME Type, mas usem este:
-    'deltax/tar-bz2'               => FALSE,          # tar.bz2
-};
 
 BEGIN
 {
@@ -83,6 +62,17 @@ sub new
 
     my $self = $class->SUPER::new( %parameters );
 
+    $self->_initialize( %parameters );
+
+    return $self;
+} ## end sub new
+
+sub _initialize()
+{
+    my ( $self, %parameters ) = @_;
+    $self->SUPER::_initialize( %parameters );
+    $log->debug( "_initialize", { package => __PACKAGE__ } );
+
     $self->{ config } = {
         protocol       => undef,
         host           => undef,
@@ -99,17 +89,39 @@ sub new
     $self->{ connection } = undef;
     $self->{ json }       = undef;
 
-    $self->_initialize( %parameters );
+    #-------------------------------------------------------------------------------
+    # Tipos de protocolos suportados
+    #-------------------------------------------------------------------------------
+    $self->{ supportedProtocols } = {
+        'FTP' => {
+            connect  => 'connectFTP',
+            getFiles => 'getFilesFTP',
+        },
+        'SFTP' => {
+            connect  => 'connectSFTP',
+            getFiles => 'getFilesSFTP',
+        },
+        'LOCAL' => {
+            connect  => 'connectLOCAL',
+            getFiles => 'getFilesLOCAL',
+        },
+    };
 
-    return $self;
-} ## end sub new
-
-sub _initialize()
-{
-    my ( $self, %parameters ) = @_;
-    $self->SUPER::_initialize( %parameters );
-    $log->debug( "_initialize", { package => __PACKAGE__ } );
-}
+    #-------------------------------------------------------------------------------
+    # Tipos de MIME-Types suportados
+    #-------------------------------------------------------------------------------
+    $self->{ supportedMimeTypes } = {
+        'application/x-tar-gz'         => FALSE,          # .tar.gz
+        'application/x-gzip'           => FALSE,          # .tar.gz
+        'application/x-bzip'           => FALSE,          # .bz2
+        'application/x-bzip2'          => FALSE,          # .bz2
+        'application/zip'              => 'unZipFile',    # .zip
+        'application/x-rar-compressed' => FALSE,          # .rar
+        'application/x-tar'            => FALSE,          # .tar
+        'application/x-7z-compressed'  => FALSE,          # .tar
+        'application/pdf'              => FALSE,          # .pdf
+    };
+} ## end sub _initialize
 
 sub END
 {
@@ -121,7 +133,13 @@ sub END
 
 my $setProtocol = sub {
     my ( $self, $value ) = @_;
-    return FALSE unless ( $supportedProtocols->{ uc( $value ) } );
+
+    if ( !$self->{ supportedProtocols }->{ uc( $value ) } )
+    {
+        $log->error( "Protocolo [ $value ] não suportado..." );
+        return FALSE;
+    }
+
     return $self->{ config }->{ protocol } = uc( $value );
 };
 my $setHost = sub {
@@ -251,36 +269,25 @@ sub connect()
 
     return FALSE unless $self->testConfig();
 
-    my $retorno = FALSE;
+    my $connectSub = $self->{ supportedProtocols }->{ uc $self->{ config }->{ protocol } }->{ connect };
 
-    if ( uc $self->{ config }->{ protocol } eq 'FTP' )
-    {
-        $retorno = $self->connectFTP( %parameters );
-    }
-    elsif ( uc $self->{ config }->{ protocol } eq 'SFTP' )
-    {
-        $retorno = $self->connectSFTP( %parameters );
-    }
-    elsif ( uc $self->{ config }->{ protocol } eq 'LOCAL' )
-    {
-        $retorno = $self->connectLocal( %parameters );
-    }
-
-    return $retorno;
+    return $self->$connectSub( %parameters );
 } ## end sub connect
 
 =head2 C<connectFTP()>
 =cut
 
-sub connectFTP()
+sub connectFTP ()
 {
     my ( $self, %parameters ) = @_;
 
-    eval { require Net::FTP; };
+    my $moduleConn = 'Net::FTP';
+
+    eval "require $moduleConn;";
 
     if ( $@ )
     {
-        $log->error( "Erro ao usar o módulo [ Net::FTP ]..." . $@ );
+        $log->error( "Erro ao usar o módulo [ $moduleConn ]..." . $@ );
         return FALSE;
     }
 
@@ -291,13 +298,8 @@ sub connectFTP()
         Passive => $self->{ config }->{ passive } // 1,
     );
 
+    $log->info( "Conectando no FTP [ $args{Host}\:$args{Port} ]" );
     $self->{ connection } = Net::FTP->new( %args );
-
-    if ( $@ )
-    {
-        $log->error( "Erro ao conectar no FTP [ $args{Host}\:$args{Port} ] ... [ $@ ]" );
-        return FALSE;
-    }
 
     if ( $self->{ connection } )
     {
@@ -311,30 +313,33 @@ sub connectFTP()
         }
         else
         {
-            $log->info( "Logged on [ ${user}\@$args{Host} ]..." );
-            return TRUE;
+            $log->info( "Conexão feita com sucesso no FTP [ ${user}\@$args{Host} ]..." );
+            return $self->{ connection };
         }
-
     } ## end if ( $self->{ connection...})
     else
     {
         $log->error( "Não foi possível criar o objeto FTP..." );
         return FALSE;
     }
+
+    return FALSE;
 } ## end sub connectFTP
 
 =head2 C<connectSFTP()>
 =cut
 
-sub connectSFTP()
+sub connectSFTP ()
 {
     my ( $self, %parameters ) = @_;
 
-    eval { require Net::SFTP::Foreign; };
+    my $moduleConn = 'Net::SFTP::Foreign';
+
+    eval "require $moduleConn;";
 
     if ( $@ )
     {
-        $log->error( "Erro ao usar o módulo [ Net::SFTP::Foreign ]..." . $@ );
+        $log->error( "Erro ao usar o módulo [ $moduleConn ]..." . $@ );
         return FALSE;
     }
 
@@ -353,26 +358,32 @@ sub connectSFTP()
     push @{ $args{ key_path } }, $self->{ config }->{ identity_file } if $self->{ config }->{ identity_file };
     push @{ $args{ more } }, '-v' if ( $self->{ config }->{ debug } );
 
+    $log->info( "Conectando no SFTP [ $args{host}\:$args{port} ]" );
     $self->{ connection } = eval { Net::SFTP::Foreign->new( %args ); };
 
     if ( $@ )
     {
         $log->error( $@ );
+        $log->error( "Não foi possível criar o objeto SFTP..." );
         return FALSE;
-    }
+    } ## end if ( $@ )
     elsif ( $self->{ connection }->error )
     {
         $log->error( $self->{ connection }->error );
         return FALSE;
     }
+    else
+    {
+        $log->info( "Conexão feita com sucesso no SFTP [ $args{user}\@$args{host} ]..." );
+    }
 
-    return TRUE;
+    return $self->{ connection };
 } ## end sub connectSFTP
 
 =head2 C<connectLocal()>
 =cut
 
-sub connectLocal()
+sub connectLocal ()
 {
     my ( $self, %parameters ) = @_;
 
@@ -416,32 +427,15 @@ sub getFiles
 
     return FALSE unless ( $self->testConfig() );
 
-    my $getFilesFunctions = {
-        'FTP'   => 'getFilesFTP',
-        'SFTP'  => 'getFilesSFTP',
-        'LOCAL' => 'getFilesLOCAL'
-    };
-
-    my $protocol = uc $self->{ config }->{ protocol };
-    my $subName;
-
-    if ( !$getFilesFunctions->{ $protocol } )
-    {
-        $log->error( "SUB getFiles para o protocolo [ $protocol ] não existe." );
-        return FALSE;
-    }
-    else
-    {
-        $subName = $getFilesFunctions->{ $protocol };
-    }
-
-    my $retorno = {};
+    my $protocol    = uc $self->{ config }->{ protocol };
+    my $getFilesSub = $self->{ supportedProtocols }->{ $protocol }->{ getFiles };
+    my $retorno;
 
     while ( my ( $directory, $directoryConfiguration ) = each( %{ $self->{ config }->{ directories } } ) )
     {
         $self->setActiveDirectory( $directory );
 
-        $retorno->{ $directory } = $self->$subName( %parameters );
+        $retorno->{ $directory } = $self->$getFilesSub( %parameters );
 
         if ( ( ref $retorno->{ $directory } eq 'HASH' ) && ( $retorno->{ $directory }->{ error } == 0 ) && ( $directoryConfiguration->{ 'unpack' } ) )
         {
@@ -478,7 +472,7 @@ sub getFilesFTP()
 
     my $remoteDirectory = $self->getActiveDirectory();
     my $configuration   = $self->{ config }->{ directories }->{ $remoteDirectory };
-    my $localDirectory  = $self->{ config }->{ localDirectory };                      #'./download/';
+    my $localDirectory  = $self->{ config }->{ localDirectory };
 
     $log->info( "Entrando em [ getFilesFTP ] para o diretório [ $remoteDirectory ]..." );
 
@@ -498,65 +492,65 @@ sub getFilesFTP()
         };
     } ## end unless ( $self->{ connection...})
 
-    my $files = $self->{ connection }->ls();
+    my $remoteFiles = $self->{ connection }->ls();
 
-    if ( ( !defined $files ) && ( $self->{ connection }->message() =~ 'No files found' ) )
+    if ( ( !defined $remoteFiles ) && ( $self->{ connection }->message() =~ /No files found/ ) )
     {
         return {
             error   => 0,
             message => $self->{ connection }->message(),
             files   => []
         };
-    } ## end if ( ( !defined $files...))
-    elsif ( !defined $files )
+    } ## end if ( ( !defined $remoteFiles...))
+    elsif ( !defined $remoteFiles )
     {
-
         return {
             error   => 1,
-            message => ( $self->{ connection }->message() || '' )
+            message => ( $self->{ connection }->message() // '' )
         };
-    } ## end elsif ( !defined $files )
-
-    foreach my $remoteFile ( @{ $files } )
+    } ## end elsif ( !defined $remoteFiles...)
+    else
     {
-        my $status = $self->canDownloadFile( fileName => $remoteFile );
-        if ( $status < 0 )
+        foreach my $remoteFile ( @{ $remoteFiles } )
         {
-            push( @{ $retorno->{ notDownloadedFiles } }, { name => $remoteFile, status => $status } );
-            next;
-        }
+            my $status = $self->canDownloadFile( fileName => $remoteFile );
+            if ( $status < 0 )
+            {
+                push( @{ $retorno->{ notDownloadedFiles } }, { name => $remoteFile, status => $status } );
+                next;
+            }
 
-        $log->info( "Baixando $remoteFile..." );
+            $log->info( "Baixando o arquivo [ $remoteFile ]..." );
 
-        my $localFile = $localDirectory . '/' . $remoteFile;
-        my $get       = eval { $self->{ connection }->get( $remoteFile, $localFile ); };
+            my $localFile = $localDirectory . '/' . $remoteFile;
+            my $get       = eval { $self->{ connection }->get( $remoteFile, $localFile ); };
 
-        my $file = {
-            error     => 0,
-            message   => '',
-            name      => $remoteFile,
-            file_size => -1,
-            md5sum    => undef,
-            filePath  => $localFile
-        };
+            my $file = {
+                error     => 0,
+                message   => '',
+                name      => $remoteFile,
+                file_size => -1,
+                md5sum    => undef,
+                filePath  => $localFile
+            };
 
-        if ( !$get )
-        {
-            $file->{ error }   = 1;
-            $file->{ message } = $self->{ connection }->message();
-        }
-        else
-        {
-            $file->{ file_size } = -s $localFile;
+            if ( !$get )
+            {
+                $file->{ error }   = 1;
+                $file->{ message } = $self->{ connection }->message();
+            }
+            else
+            {
+                $file->{ file_size } = -s $localFile;
+                my $md5 = $self->getFileMD5( file => $localFile );
+                $file->{ md5sum } = $md5;
+            } ## end else [ if ( !$get ) ]
 
-            my $md5 = $self->getFileMD5( file => $localFile );
-            $file->{ md5sum } = $md5;
+            push( @{ $retorno->{ downloadedFiles } }, $file );
+            last() if ( $parameters{ only_one_file } );
+        } ## end foreach my $remoteFile ( @{...})
+    } ## end else [ if ( ( !defined $remoteFiles...))]
 
-        } ## end else [ if ( !$get ) ]
-
-        push( @{ $retorno->{ downloadedFiles } }, $file );
-        last() if ( $parameters{ only_one_file } );
-    } ## end foreach my $remoteFile ( @{...})
     return $retorno;
 } ## end sub getFilesFTP
 
@@ -579,9 +573,15 @@ sub canDownloadFile()
     {
         $self->{ message } = "Arquivo [ $fileName ] não bate com a regra de filename_pattern.";
         return -2 if ( $fileName !~ /$activeDownload->{fileNameRule}/ );
+        return TRUE;
+    } ## end if ( defined $activeDownload...)
+    else
+    {
+        $log->error( "Não existe regra para o nome do arquivo......" );
+        return FALSE;
     }
 
-    return TRUE;
+    return FALSE;
 } ## end sub canDownloadFile
 
 =head2 C<getFilesSFTP()>
@@ -691,23 +691,23 @@ sub getFilesLOCAL()
 sub unPackFile()
 {
     my ( $self, %parameters ) = @_;
-    my $mmt = $parameters{ conf }{ 'MIMI-Type' };
+    my $mmt = $parameters{ conf }{ 'MIME-Type' };
 
     my $files = [];
-    if ( !$supported_mimi_types->{ $mmt } == FALSE )
+    if ( !$self->{ supportedMimeTypes }->{ $mmt } == FALSE )
     {
         my $unPackParam = {
             fileName => $parameters{ file }{ file_path },
             out_path => $parameters{ conf }{ unpackDirectory }
         };
 
-        my $subname = $supported_mimi_types->{ $mmt };
+        my $subname = $self->{ supportedMimeTypes }->{ $mmt };
         $files = $self->$subname( $unPackParam );
 
-    } ## end if ( !$supported_mimi_types...)
+    } ## end if ( !$self->{ supportedMimeTypes...})
     else
     {
-        return { message => "MIMI-Type $mmt não suportado", error => 1 };
+        return { message => "MIME-Type $mmt não suportado", error => 1 };
     }
 
     return { error => 0, files => $files };
