@@ -31,7 +31,7 @@ BEGIN
     require Siffra::Tools;
     use Exporter ();
     use vars qw($VERSION @ISA @EXPORT @EXPORT_OK %EXPORT_TAGS);
-    $VERSION = '0.06';
+    $VERSION = '0.07';
     @ISA     = qw(Siffra::Tools Exporter);
 
     #Give a hoot don't pollute, do not export more than needed by default
@@ -629,6 +629,7 @@ sub getFilesSFTP()
                     count  => $remoteFile->{ a }->{ size },
                     ETA    => 'linear',
                     remove => 1,
+                    silent => !DEBUG,
                 }
             );
             $progress->minor( 0 );
