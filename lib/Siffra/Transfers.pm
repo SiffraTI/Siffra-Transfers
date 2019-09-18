@@ -473,6 +473,7 @@ sub getFiles
 
 sub getFilesFTP()
 {
+    # TODO: Apagar os arquivos da Cred do FTP
     $log->debug( "getFilesFTP", { package => __PACKAGE__ } );
     my ( $self, %parameters ) = @_;
 
